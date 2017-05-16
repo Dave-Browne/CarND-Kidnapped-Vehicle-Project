@@ -23,7 +23,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 
     // Variable declarations
     Particle P;                          // single particle
-    num_particles = 1;                  // number of particles
+    num_particles =1;                    // number of particles
     particles.resize(num_particles);
     weights.resize(num_particles);
 
@@ -55,26 +55,32 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
 
     // Gaussian noise
     default_random_engine gen;           // generator for gaussian distribution
-    normal_distribution<double> x_gauss(0, std_pos[0]);
-    normal_distribution<double> y_gauss(0, std_pos[1]);
-    normal_distribution<double> theta_gauss(0, std_pos[2]);
+    normal_distribution<double> x_gauss(0., std_pos[0]);
+    normal_distribution<double> y_gauss(0., std_pos[1]);
+    normal_distribution<double> theta_gauss(0., std_pos[2]);
 
     // Loop over each particle and update it's x, y and theta values
     for (auto& P : particles) {                      // & defines the pointer which allows particles to be updated as P changes
+//        cout << "Before Prediction   : P.x " << P.x << ", P.y " << P.y <<  ", P.theta " << P.theta << endl;
 
-        if (yaw_rate == 0) {
+        if (fabs(yaw_rate) < 0.00001) {              // car going straight
             P.x += velocity * delta_t * cos(P.theta);
             P.y += velocity * delta_t * sin(P.theta);
         }
-        else {
+        else {                                       // car turning
             P.x += velocity / yaw_rate * ( sin(P.theta+yaw_rate*delta_t) - sin(P.theta) );
             P.y += velocity / yaw_rate * ( cos(P.theta) - cos(P.theta+yaw_rate*delta_t) );
             P.theta += yaw_rate * delta_t;
         }
+//        cout << "Post pred no noise  : P.x " << P.x << ", P.y " << P.y <<  ", P.theta " << P.theta << endl;
         P.x += x_gauss(gen);
         P.y += y_gauss(gen);
         P.theta += theta_gauss(gen);
+        cout << "Pred+noise: P.x " << P.x << ", P.y " << P.y <<  ", P.theta " << P.theta << endl;
     }
+//    for (int i=0; i<num_particles; ++i) {
+//        cout << "Step1: x " << particles[i].x << ", y " << particles[i].y << ", theta " << particles[i].theta << ", weight " << particles[i].weight << endl;
+//    } // END OF TEST
 }
 
 
@@ -116,23 +122,25 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   Keep in mind that this transformation requires both rotation AND translation (but no scaling).
 	//   The following is a good resource for the theory:
 	//   https://www.willamette.edu/~gorr/classes/GeneralGraphics/Transforms/transforms2d.htm
-	//   and the following is a good resource for the actual equation to implement (look at equation 
-	//   3.33. Note that you'll need to switch the minus sign in that equation to a plus to account 
-	//   for the fact that the map's y-axis actually points downwards.)
+	//   and the following is a good resource for the actual equation to implement (look at equation 3.33) 
 	//   http://planning.cs.uiuc.edu/node99.html
 
     // Variable declarations
     LandmarkObs lm;                                // single landmark
+    LandmarkObs t_observation;                     // single transformed landmark observation
     vector<LandmarkObs> transformed_observations;  // vector of observations transformed to the map coordinate system
     vector<LandmarkObs> landmarks_in_range;        // vector of landmarks in range of the car
     double distance;
-    double sigma_x, sigma_y, x, y, mu_x, mu_y, exponent, MGP;
+    double sigma_x, sigma_y, x, y, mu_x, mu_y, dx2, dy2, exponent, MGP;
 
     // Clear particle's weights
     weights.clear();
 
+    // Clear landmarks in range of car
+    landmarks_in_range.clear();
+
     // Identify the landmarks in range of the car
-    for (auto& landmark : map_landmarks.landmark_list) {
+    for (auto landmark : map_landmarks.landmark_list) {
         distance = dist(0, 0, landmark.x_f, landmark.y_f);
         if (distance <= sensor_range) {
             lm.x = landmark.x_f;
@@ -149,11 +157,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         // Clear transformed_observations so that observations for a new particle can be pushed in
         transformed_observations.clear();
         // Transform this particle's observations...
-        // Be careful: overwriting obs.x will affect the transformed y observation! That is why lm is re-used
-        for (auto obs : observations) {
-            lm.x = P.x + (obs.x * cos(P.theta)) - (obs.y * sin(P.theta));
-            lm.y = P.y + (obs.x * sin(P.theta)) + (obs.y * cos(P.theta));
-            transformed_observations.push_back(lm);
+        for (size_t i=0; i<observations.size(); ++i) {
+            t_observation.x = P.x + (observations[i].x * cos(P.theta)) - (observations[i].y * sin(P.theta));
+            t_observation.y = P.y + (observations[i].x * sin(P.theta)) + (observations[i].y * cos(P.theta));
+            transformed_observations.push_back(t_observation);
         }
         // Now that this particle's landmark observations have been transformed,
         //   we need to find it's associated landmark ID using the dataAssociation function.
@@ -169,11 +176,17 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
             y = t_obs.y;
             mu_x = landmarks_in_range[t_obs.id].x;
             mu_y = landmarks_in_range[t_obs.id].y;
-            exponent = -((pow((x-mu_x), 2)/(2.*pow(sigma_x, 2))) + (pow((y-mu_y), 2)/(2.*pow(sigma_y, 2))));
-            MGP = (1 / (2. * M_PI * sigma_x * sigma_y)) * exp(exponent);
+            dx2 = (x-mu_x) * (x-mu_x);
+            dy2 = (y-mu_y) * (y-mu_y);
+            exponent = exp(-1 * ( dx2/(2.*sigma_x*sigma_x) + dy2/(2.*sigma_y*sigma_y) ));
+            MGP = 0.5 * exponent / (M_PI*sigma_x*sigma_y);
             P.weight *= MGP;
+//            cout << "exponent " << exponent << ", MGP " << MGP << ", P.weight " << P.weight << endl;
         }
         weights.push_back(P.weight);
+    }
+    for (int i=0; i<num_particles; ++i) {
+        cout << "Weights: x " << particles[i].x << ", y " << particles[i].y << ", theta " << particles[i].theta << ", weight " << particles[i].weight << endl;
     }
 }
 
@@ -197,13 +210,13 @@ void ParticleFilter::resample() {
     }
 //    // TESTING
 //    for (int i=0; i<num_particles; ++i) {
-//        cout << "PRE : " << particles[i].x << " " << particles[i].y << " " << particles[i].theta << " " << particles[i].weight << endl;
+//        cout << "PRE  : x " << particles[i].x << ", y " << particles[i].y << ", theta " << particles[i].theta << ", weight " << particles[i].weight << endl;
 //    } // END OF TEST
     particles = new_particles;
 //    // TESTING
-    for (int i=0; i<num_particles; ++i) {
-        cout << "POST: " << particles[i].x << " " << particles[i].y << " " << particles[i].theta << " " << particles[i].weight << endl;
-    } // END OF TEST
+//    for (int i=0; i<num_particles; ++i) {
+//        cout << "POST : x " << particles[i].x << ", y " << particles[i].y << ", theta " << particles[i].theta << ", weight " << particles[i].weight << endl;
+//    } // END OF TEST
 }
 
 
