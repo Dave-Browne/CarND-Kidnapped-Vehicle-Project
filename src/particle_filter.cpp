@@ -23,7 +23,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 
     // Variable declarations
     Particle P;                          // single particle
-    num_particles = 100;                   // number of particles
+    num_particles = 20;                  // number of particles
     particles.resize(num_particles);
     weights.resize(num_particles);
 
@@ -125,7 +125,12 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     vector<LandmarkObs> transformed_observations;  // vector of observations transformed to the map coordinate system
     vector<LandmarkObs> landmarks_in_range;        // vector of landmarks in range of the car
     double distance;
-    double sigma_x, sigma_y, x, y, mu_x, mu_y, dx2, dy2, exponent, MGP;
+    double sigma_x, sigma_y, x, y, mu_x, mu_y, dx2, dy2, exponent;
+
+    // Calculate constant parts of the Multivariate Gaussian Distribution outside of the for loops
+    sigma_x = std_landmark[0];
+    sigma_y = std_landmark[1];
+    const double MGP_const = 0.5 / (M_PI*sigma_x*sigma_y);
 
     // Clear particle's weights
     weights.clear();
@@ -164,8 +169,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
         // Calculate Multivariate Gaussian Probability of each transformed observation (product of these = weight)
         // transformed_observations contains the ID of landmarks_in_range...
-        sigma_x = std_landmark[0];
-        sigma_y = std_landmark[1];
         for (auto t_obs : transformed_observations) {
             x = t_obs.x;
             y = t_obs.y;
@@ -174,8 +177,7 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
             dx2 = (x-mu_x) * (x-mu_x);
             dy2 = (y-mu_y) * (y-mu_y);
             exponent = exp(-1 * ( dx2/(2.*sigma_x*sigma_x) + dy2/(2.*sigma_y*sigma_y) ));
-            MGP = 0.5 * exponent / (M_PI*sigma_x*sigma_y);
-            P.weight *= MGP;
+            P.weight *= MGP_const * exponent;;
         }
         weights.push_back(P.weight);
     }
